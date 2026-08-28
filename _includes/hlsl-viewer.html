@@ -7,8 +7,8 @@
   <div style="position: relative; width: 100%; max-width: {{ max_width }}; aspect-ratio: {{ aspect }}; margin: 0 auto; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); background: #0c1017;">
     <canvas id="{{ viewer_id }}-canvas" width="640" height="360"
             style="width: 100%; height: 100%; display: block; border-radius: 12px;"></canvas>
-    <div id="{{ viewer_id }}-error" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; color: #ff6b6b; font-family: monospace; font-size: 0.75rem; background: rgba(0,0,0,0.85); padding: 0.75rem; text-align: left; white-space: pre-wrap; z-index: 10; max-height: 50%; overflow-y: auto;"></div>
   </div>
+  <div id="{{ viewer_id }}-error" style="display: none; max-width: {{ max_width }}; margin: 0.75rem auto; color: #ff6b6b; font-family: monospace; font-size: 0.8rem; background: #241418; border: 1px solid #e05252; padding: 0.75rem 1rem; border-radius: 8px; text-align: left; white-space: pre-wrap;"></div>
   <span style="font-size: 0.85rem; opacity: 0.7; margin-top: 0.5rem; display: inline-block;">
     Código HLSL executado ao vivo com WebGL (proporção {{ aspect | replace: "/", ":" }})
   </span>
@@ -17,104 +17,96 @@
 <script>
 (function() {
   function startHLSL() {
-    const canvas = document.getElementById('{{ viewer_id }}-canvas');
-    const errBox = document.getElementById('{{ viewer_id }}-error');
+    var canvas = document.getElementById('{{ viewer_id }}-canvas');
+    var errBox = document.getElementById('{{ viewer_id }}-error');
     if (!canvas) return;
 
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (!gl) {
       if (errBox) {
         errBox.style.display = 'block';
-        errBox.textContent = 'Navegador sem suporte a WebGL.';
+        errBox.textContent = 'Aviso: Seu navegador não conseguiu inicializar o contexto WebGL.';
       }
       return;
     }
 
-    // Código HLSL bruto fornecido
-    let rawHLSL = `{{ include.code | strip }}`;
+    var rawHLSL = `{{ include.code | strip }}`;
 
-    // Limpeza de semânticas HLSL exclusivas
-    let cleanedHLSL = rawHLSL
+    /* Remove comentários de linha única para evitar quebra em minificadores de HTML */
+    var cleanedHLSL = rawHLSL
+      .replace(/\/\/[^\n\r]*/g, '')
       .replace(/:\s*SV_Target\d*/gi, '')
       .replace(/:\s*POSITION\d*/gi, '')
-      .replace(/:\s*TEXCOORD\d*/gi, '');
+      .replace(/:\s*TEXCOORD\d*/gi, '')
+      .replace(/([a-zA-Z0-9_\.]+)\s*-\s*0\.5\b/g, '$1 - float2(0.5, 0.5)')
+      .replace(/3\.0\s*-\s*2\.0\s*\*\s*([a-zA-Z0-9_\.]+)/g, 'float2(3.0, 3.0) - float2(2.0, 2.0) * $1')
+      .replace(/0\.5\s*\+\s*0\.5\s*\*\s*cos/g, 'float3(0.5, 0.5, 0.5) + float3(0.5, 0.5, 0.5) * cos');
 
-    const vsSource = `
-      attribute vec2 a_pos;
-      void main() {
-        gl_Position = vec4(a_pos, 0.0, 1.0);
-      }
-    `;
+    var vsSource = [
+      'attribute vec2 a_pos;',
+      'void main() {',
+      '  gl_Position = vec4(a_pos, 0.0, 1.0);',
+      '}'
+    ].join('\n');
 
-    // Camada de Compatibilidade: Transpila conceitos HLSL / Unity para GLSL
-    const fsSource = `
-      #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-      #else
-        precision mediump float;
-      #endif
-
-      uniform vec2 u_resolution;
-      uniform float u_time;
-      uniform vec4 _Time;
-      uniform vec4 _SinTime;
-      uniform vec4 _CosTime;
-
-      // Tipos HLSL
-      #define float2 vec2
-      #define float3 vec3
-      #define float4 vec4
-      #define fixed float
-      #define fixed2 vec2
-      #define fixed3 vec3
-      #define fixed4 vec4
-      #define half float
-      #define half2 vec2
-      #define half3 vec3
-      #define half4 vec4
-      #define int2 ivec2
-      #define int3 ivec3
-      #define int4 ivec4
-      #define bool2 bvec2
-      #define bool3 bvec3
-      #define bool4 bvec4
-      #define float2x2 mat2
-      #define float3x3 mat3
-      #define float4x4 mat4
-
-      // Funções matemáticas HLSL -> GLSL
-      #define lerp mix
-      #define frac fract
-      #define saturate(x) clamp(x, 0.0, 1.0)
-      #define fmod mod
-      #define atan2 atan
-      #define rsqrt inversesqrt
-      #define tex2D texture2D
-      #define mul(a, b) ((a) * (b))
-      #define clip(x) if ((x) < 0.0) discard;
-
-      struct v2f {
-        float2 uv;
-      };
-
-      // --- Início do código HLSL ---
-      ` + cleanedHLSL + `
-      // --- Fim do código HLSL ---
-
-      void main() {
-        v2f i;
-        i.uv = gl_FragCoord.xy / u_resolution.xy;
-        gl_FragColor = frag(i);
-      }
-    `;
+    var fsSource = [
+      '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+      '  precision highp float;',
+      '#else',
+      '  precision mediump float;',
+      '#endif',
+      'uniform vec2 u_resolution;',
+      'uniform float u_time;',
+      'uniform vec4 _Time;',
+      'uniform vec4 _SinTime;',
+      'uniform vec4 _CosTime;',
+      '#define float2 vec2',
+      '#define float3 vec3',
+      '#define float4 vec4',
+      '#define fixed float',
+      '#define fixed2 vec2',
+      '#define fixed3 vec3',
+      '#define fixed4 vec4',
+      '#define half float',
+      '#define half2 vec2',
+      '#define half3 vec3',
+      '#define half4 vec4',
+      '#define int2 ivec2',
+      '#define int3 ivec3',
+      '#define int4 ivec4',
+      '#define bool2 bvec2',
+      '#define bool3 bvec3',
+      '#define bool4 bvec4',
+      '#define float2x2 mat2',
+      '#define float3x3 mat3',
+      '#define float4x4 mat4',
+      '#define lerp mix',
+      '#define frac fract',
+      '#define saturate(x) clamp(x, 0.0, 1.0)',
+      '#define fmod mod',
+      '#define atan2 atan',
+      '#define rsqrt inversesqrt',
+      '#define tex2D texture2D',
+      '#define mul(a, b) ((a) * (b))',
+      '#define clip(x) if ((x) < 0.0) discard;',
+      'struct v2f {',
+      '  float2 uv;',
+      '};',
+      cleanedHLSL,
+      'void main() {',
+      '  v2f i;',
+      '  i.uv = gl_FragCoord.xy / u_resolution.xy;',
+      '  gl_FragColor = frag(i);',
+      '}'
+    ].join('\n');
 
     function compile(type, src) {
-      const s = gl.createShader(type);
+      var s = gl.createShader(type);
       gl.shaderSource(s, src);
       gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-        const info = gl.getShaderInfoLog(s);
-        console.error('Erro na compilação do Shader:', info);
+        var info = gl.getShaderInfoLog(s);
+        console.error('Erro de compilação do Shader:', info);
         if (errBox) {
           errBox.style.display = 'block';
           errBox.textContent = 'Erro ao compilar HLSL:\n' + info;
@@ -124,59 +116,59 @@
       return s;
     }
 
-    const vs = compile(gl.VERTEX_SHADER, vsSource);
-    const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+    var vs = compile(gl.VERTEX_SHADER, vsSource);
+    var fs = compile(gl.FRAGMENT_SHADER, fsSource);
     if (!vs || !fs) return;
 
-    const prog = gl.createProgram();
+    var prog = gl.createProgram();
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      const info = gl.getProgramInfoLog(prog);
+      var info = gl.getProgramInfoLog(prog);
       console.error('Erro ao linkar programa:', info);
       if (errBox) {
         errBox.style.display = 'block';
-        errBox.textContent = 'Erro ao linkar:\n' + info;
+        errBox.textContent = 'Erro ao linkar programa WebGL:\n' + info;
       }
       return;
     }
     gl.useProgram(prog);
 
-    const quadBuffer = gl.createBuffer();
+    var quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
       -1, -1,  1, -1, -1,  1,
       -1,  1,  1, -1,  1,  1
     ]), gl.STATIC_DRAW);
 
-    const aPos = gl.getAttribLocation(prog, 'a_pos');
+    var aPos = gl.getAttribLocation(prog, 'a_pos');
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    const uRes = gl.getUniformLocation(prog, 'u_resolution');
-    const uTime = gl.getUniformLocation(prog, 'u_time');
-    const u_Time = gl.getUniformLocation(prog, '_Time');
-    const u_SinTime = gl.getUniformLocation(prog, '_SinTime');
-    const u_CosTime = gl.getUniformLocation(prog, '_CosTime');
+    var uRes = gl.getUniformLocation(prog, 'u_resolution');
+    var uTime = gl.getUniformLocation(prog, 'u_time');
+    var u_Time = gl.getUniformLocation(prog, '_Time');
+    var u_SinTime = gl.getUniformLocation(prog, '_SinTime');
+    var u_CosTime = gl.getUniformLocation(prog, '_CosTime');
 
     function resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.max(320, Math.round(canvas.clientWidth * dpr));
-      const h = Math.max(180, Math.round(canvas.clientHeight * dpr));
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var w = Math.max(320, Math.round(canvas.clientWidth * dpr));
+      var h = Math.max(180, Math.round(canvas.clientHeight * dpr));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
       }
     }
 
-    let isRunning = true;
+    var isRunning = true;
 
     function render(timestamp) {
       if (!isRunning) return;
       resize();
 
-      const sec = timestamp * 0.001;
+      var sec = timestamp * 0.001;
 
       gl.viewport(0, 0, canvas.width, canvas.height);
       if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
@@ -192,7 +184,6 @@
     requestAnimationFrame(render);
   }
 
-  // Executa no carregamento e também suporta navegação SPA / Pjax do Chirpy
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', startHLSL);
   } else {

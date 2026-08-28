@@ -21,7 +21,7 @@ float hash(float2 p) {
 float simpleNoise(float2 uv) {
     float2 i = floor(uv);
     float2 f = frac(uv);
-    f = f * f * (3.0 - 2.0 * f);
+    f = f * f * (float2(3.0, 3.0) - float2(2.0, 2.0) * f);
     float r0 = hash(i);
     float r1 = hash(i + float2(1.0, 0.0));
     float r2 = hash(i + float2(0.0, 1.0));
@@ -31,37 +31,49 @@ float simpleNoise(float2 uv) {
 
 float4 frag(v2f i) : SV_Target
 {
-    float2 uv = i.uv - 0.5;
-    float2 p = uv * float2(16.0 / 9.0, 1.0) * 2.3;
+    // Coordenadas centralizadas e corrigidas para 16:9
+    float2 uv = i.uv - float2(0.5, 0.5);
+    float2 p = uv * float2(16.0 / 9.0, 1.0) * 2.2;
     float r2 = dot(p, p);
 
-    float3 bgColor = float3(0.06, 0.08, 0.12) + (1.0 - length(uv) * 1.2) * float3(0.04, 0.05, 0.07);
+    // Fundo ambiente elegante (gradiente vinheta escuro)
+    float3 bgColor = float3(0.08, 0.11, 0.16) + (1.0 - length(uv) * 1.3) * float3(0.05, 0.07, 0.10);
 
+    // Fora do raio da esfera, desenha o fundo
     if (r2 > 1.0) {
         return float4(bgColor, 1.0);
     }
 
+    // Normal 3D da superfície da esfera
     float z = sqrt(1.0 - r2);
     float3 N = float3(p.x, p.y, z);
     float3 V = float3(0.0, 0.0, 1.0);
     float3 L = normalize(float3(-0.6, 0.6, 0.8));
 
+    // 1. Fresnel de visão (bordas brilhantes e centro translúcido)
     float NdotV = saturate(dot(N, V));
-    float fresnelView = pow(1.0 - NdotV, 2.5);
+    float fresnelView = pow(1.0 - NdotV, 2.4);
 
+    // 2. Fresnel de iluminação direta (ponto de brilho especular)
     float NdotL = saturate(dot(N, L));
     float fresnelLight = pow(1.0 - NdotL, 2.8);
 
-    float3 iridescence = 0.5 + 0.5 * cos(NdotV * 6.0 + _Time.y * 1.5 + float3(0.0, 2.0, 4.0));
+    // 3. Efeito iridescente (interferência de película fina)
+    float3 iridescence = float3(0.5, 0.5, 0.5) + 0.5 * cos(NdotV * 6.0 + _Time.y * 1.5 + float3(0.0, 2.0, 4.0));
     float3 bubbleColor = lerp(float3(0.3, 0.8, 1.0), iridescence, 0.65);
 
-    float3 finalRGB = lerp(bgColor, bubbleColor, fresnelView * 0.7 + 0.1) + (fresnelLight * 0.4) + (fresnelView * bubbleColor * 1.3);
+    // Composição de luz e transparência
+    float3 finalRGB = lerp(bgColor, bubbleColor, fresnelView * 0.75 + 0.15) 
+                    + (fresnelLight * 0.4) 
+                    + (fresnelView * bubbleColor * 1.4);
 
+    // 4. Mecânica do Estouro (Pop com Simple Noise e Step)
+    // A bolha fica estável e a cada ciclo de tempo desintegra proceduralmente
     float popProgress = smoothstep(0.7, 0.95, frac(_Time.y * 0.25));
     float noise = simpleNoise(i.uv * 18.0);
 
     if (noise < popProgress) {
-        return float4(bgColor, 1.0); // Retorna o fundo quando estoura
+        return float4(bgColor, 1.0); // Mostra o fundo após o estouro
     }
 
     return float4(finalRGB, 1.0);
@@ -95,22 +107,37 @@ SurfaceDescription SurfaceDescriptionFunction(SurfaceDescriptionInputs IN)
 {
     SurfaceDescription surface;
 
+    // 1. Fresnel de visão (transparência central e brilho de contorno)
     float fresnelView = pow(1.0 - saturate(dot(IN.WorldSpaceNormal, IN.WorldSpaceViewDirection)), _Power);
 
+    // 2. Fresnel especular da luz principal (ponto de brilho curvo)
     float3 lightDir = MainLightDirection();
     float fresnelLight = pow(1.0 - saturate(dot(IN.WorldSpaceNormal, lightDir)), 2.79);
 
+    // 3. Composição de cor e reflexo da película
     float4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, IN.uv0.xy);
     float4 reflection = (texColor * fresnelView * fresnelLight) + (_Fresnel_Color * fresnelView);
     surface.BaseColor = reflection.rgb;
 
+    // 4. Mecânica de estouro com ruído procedural (Simple Noise + Step)
     float noise = SimpleNoise(IN.uv0.xy, 25.0);
     float popThreshold = 1.0 - _Pop;
     float alphaCut = step(noise, popThreshold);
 
+    // 5. Saída de alfa final com descarte dos fragmentos estourados
     surface.Alpha = fresnelView * alphaCut;
     surface.AlphaClipThreshold = 0.5;
 
     return surface;
 }
 ```
+
+---
+
+## 3. Como funciona o efeito de "Pop":
+
+1. **`SimpleNoise(uv, 25.0)`**: Produz uma distribuição determinística de valores em escala de cinza (`0.0` a `1.0`) na superfície da bolha.
+2. **`1.0 - _Pop`**: Converte o slider de estouro em um limiar decrescente.
+3. **`step(noise, popThreshold)`**:
+   - Enquanto `_Pop == 0.0`, o limiar é `1.0` e quase todo o ruído passa (bolha visível e intacta).
+   - Conforme `_Pop` se aproxima de `1.0`, o limiar diminui e o `step` retorna `0.0`, cortando o canal alfa em buracos orgânicos até a bolha sumir por completo.
