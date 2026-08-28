@@ -15,7 +15,8 @@ Abaixo está o shader executando em tempo real no navegador, alimentado diretame
 float4 frag(v2f i) : SV_Target
 {
     float2 uv = i.uv;
-    float3 col = float3(0.5, 0.5, 0.5) + 0.5 * cos(_Time.y + uv.xyx + float3(0.0, 2.0, 4.0));
+    float3 t = float3(_Time.y, _Time.y, _Time.y);
+    float3 col = float3(0.5, 0.5, 0.5) + 0.5 * cos(t + uv.xyx + float3(0.0, 2.0, 4.0));
     return float4(col, 1.0);
 }
 {% endcapture %}
