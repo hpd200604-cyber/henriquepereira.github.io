@@ -4,9 +4,11 @@
 {% assign max_width = include.max_width | default: "640px" %}
 
 <div class="hlsl-viewer-container" style="margin: 1.5rem 0; text-align: center;">
-  <canvas id="{{ viewer_id }}-canvas" 
-          style="width: 100%; max-width: {{ max_width }}; height: auto; aspect-ratio: {{ aspect }}; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); display: block; margin: 0 auto; background: #0b0e14;"></canvas>
-  <div id="{{ viewer_id }}-error" style="display: none; color: #ff6b6b; font-family: monospace; font-size: 0.8rem; background: rgba(255,0,0,0.1); padding: 0.5rem; border-radius: 6px; max-width: {{ max_width }}; margin: 0.5rem auto; text-align: left; white-space: pre-wrap;"></div>
+  <div style="position: relative; width: 100%; max-width: {{ max_width }}; aspect-ratio: {{ aspect }}; margin: 0 auto; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); background: #0c1017;">
+    <canvas id="{{ viewer_id }}-canvas" width="640" height="360"
+            style="width: 100%; height: 100%; display: block; border-radius: 12px;"></canvas>
+    <div id="{{ viewer_id }}-error" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; color: #ff6b6b; font-family: monospace; font-size: 0.75rem; background: rgba(0,0,0,0.85); padding: 0.75rem; text-align: left; white-space: pre-wrap; z-index: 10; max-height: 50%; overflow-y: auto;"></div>
+  </div>
   <span style="font-size: 0.85rem; opacity: 0.7; margin-top: 0.5rem; display: inline-block;">
     Código HLSL executado ao vivo com WebGL (proporção {{ aspect | replace: "/", ":" }})
   </span>
@@ -18,14 +20,24 @@
     const canvas = document.getElementById('{{ viewer_id }}-canvas');
     const errBox = document.getElementById('{{ viewer_id }}-error');
     if (!canvas) return;
-    const gl = canvas.getContext('webgl');
-    if (!gl) return;
 
-    // Código HLSL puro fornecido
-    const rawHLSL = `{{ include.code | strip }}`;
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) {
+      if (errBox) {
+        errBox.style.display = 'block';
+        errBox.textContent = 'Navegador sem suporte a WebGL.';
+      }
+      return;
+    }
 
-    // Limpeza de semânticas HLSL exclusivas (ex: : SV_Target)
-    const cleanedHLSL = rawHLSL.replace(/:\s*SV_Target\d*/gi, '');
+    // Código HLSL bruto fornecido
+    let rawHLSL = `{{ include.code | strip }}`;
+
+    // Limpeza de semânticas HLSL exclusivas
+    let cleanedHLSL = rawHLSL
+      .replace(/:\s*SV_Target\d*/gi, '')
+      .replace(/:\s*POSITION\d*/gi, '')
+      .replace(/:\s*TEXCOORD\d*/gi, '');
 
     const vsSource = `
       attribute vec2 a_pos;
@@ -36,11 +48,19 @@
 
     // Camada de Compatibilidade: Transpila conceitos HLSL / Unity para GLSL
     const fsSource = `
-      precision mediump float;
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+        precision highp float;
+      #else
+        precision mediump float;
+      #endif
+
       uniform vec2 u_resolution;
       uniform float u_time;
+      uniform vec4 _Time;
+      uniform vec4 _SinTime;
+      uniform vec4 _CosTime;
 
-      // Tipos vetoriais e escalares HLSL
+      // Tipos HLSL
       #define float2 vec2
       #define float3 vec3
       #define float4 vec4
@@ -71,19 +91,15 @@
       #define rsqrt inversesqrt
       #define tex2D texture2D
       #define mul(a, b) ((a) * (b))
-
-      // Variáveis globais da Unity
-      #define _Time vec4(u_time * 0.05, u_time, u_time * 2.0, u_time * 3.0)
-      #define _SinTime vec4(sin(u_time * 0.125), sin(u_time * 0.25), sin(u_time * 0.5), sin(u_time))
-      #define _CosTime vec4(cos(u_time * 0.125), cos(u_time * 0.25), cos(u_time * 0.5), cos(u_time))
+      #define clip(x) if ((x) < 0.0) discard;
 
       struct v2f {
         float2 uv;
       };
 
-      // --- Início do código HLSL do Usuário ---
+      // --- Início do código HLSL ---
       ` + cleanedHLSL + `
-      // --- Fim do código HLSL do Usuário ---
+      // --- Fim do código HLSL ---
 
       void main() {
         v2f i;
@@ -98,9 +114,10 @@
       gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
         const info = gl.getShaderInfoLog(s);
+        console.error('Erro na compilação do Shader:', info);
         if (errBox) {
           errBox.style.display = 'block';
-          errBox.textContent = 'Erro ao compilar HLSL: ' + info;
+          errBox.textContent = 'Erro ao compilar HLSL:\n' + info;
         }
         return null;
       }
@@ -116,16 +133,18 @@
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(prog);
+      console.error('Erro ao linkar programa:', info);
       if (errBox) {
         errBox.style.display = 'block';
-        errBox.textContent = 'Erro ao linkar programa: ' + gl.getProgramInfoLog(prog);
+        errBox.textContent = 'Erro ao linkar:\n' + info;
       }
       return;
     }
     gl.useProgram(prog);
 
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    const quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
       -1, -1,  1, -1, -1,  1,
       -1,  1,  1, -1,  1,  1
@@ -137,32 +156,47 @@
 
     const uRes = gl.getUniformLocation(prog, 'u_resolution');
     const uTime = gl.getUniformLocation(prog, 'u_time');
+    const u_Time = gl.getUniformLocation(prog, '_Time');
+    const u_SinTime = gl.getUniformLocation(prog, '_SinTime');
+    const u_CosTime = gl.getUniformLocation(prog, '_CosTime');
 
     function resize() {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.round(canvas.clientWidth * dpr);
-      const h = Math.round(canvas.clientHeight * dpr);
+      const w = Math.max(320, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(180, Math.round(canvas.clientHeight * dpr));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
       }
     }
 
-    function render(t) {
+    let isRunning = true;
+
+    function render(timestamp) {
+      if (!isRunning) return;
       resize();
+
+      const sec = timestamp * 0.001;
+
       gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform2f(uRes, canvas.width, canvas.height);
-      gl.uniform1f(uTime, t * 0.001);
+      if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+      if (uTime) gl.uniform1f(uTime, sec);
+      if (u_Time) gl.uniform4f(u_Time, sec * 0.05, sec, sec * 2.0, sec * 3.0);
+      if (u_SinTime) gl.uniform4f(u_SinTime, Math.sin(sec * 0.125), Math.sin(sec * 0.25), Math.sin(sec * 0.5), Math.sin(sec));
+      if (u_CosTime) gl.uniform4f(u_CosTime, Math.cos(sec * 0.125), Math.cos(sec * 0.25), Math.cos(sec * 0.5), Math.cos(sec));
+
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       requestAnimationFrame(render);
     }
+
     requestAnimationFrame(render);
   }
 
+  // Executa no carregamento e também suporta navegação SPA / Pjax do Chirpy
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', startHLSL);
   } else {
-    startHLSL();
+    setTimeout(startHLSL, 50);
   }
 })();
 </script>
