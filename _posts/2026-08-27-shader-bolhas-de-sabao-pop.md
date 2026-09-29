@@ -11,9 +11,16 @@ math: true
 
 ### Demonstração Interativa em Tempo Real
 
-Abaixo está a renderização em tempo real do shader simulando a geometria 3D da bolha, o Fresnel e o ciclo de estouro:
+Abaixo está a renderização em tempo real do shader com o painel de propriedades **ImGui**. Você pode interagir com os sliders de `_Power`, `_Pop` e o seletor de cor:
 
 {% capture bolha_hlsl %}
+Properties
+{
+    _Power ("Power", Range(0.1, 5.0)) = 2.4
+    _Pop ("Pop (Estouro)", Range(0.0, 1.0)) = 0.0
+    _FresnelColor ("Fresnel Color", Color) = (0.3, 0.8, 1.0, 1.0)
+}
+
 float hash(float2 p) {
     return frac(sin(dot(p, float2(12.9898, 78.233))) * 43758.5453);
 }
@@ -44,25 +51,24 @@ float4 frag(v2f i) : SV_Target
     float z = sqrt(1.0 - r2);
     float3 N = float3(p.x, p.y, z);
     float3 V = float3(0.0, 0.0, 1.0);
-    float3 L = normalize(float3(-0.6, 0.6, 0.8));
+    float3 L = normalize(float3(-0.6 + sin(_MouseDrag.x), 0.6 + sin(_MouseDrag.y), 0.8));
 
     float NdotV = saturate(dot(N, V));
-    float fresnelView = pow(1.0 - NdotV, 2.4);
+    float fresnelView = pow(1.0 - NdotV, _Power);
 
     float NdotL = saturate(dot(N, L));
     float fresnelLight = pow(1.0 - NdotL, 2.8);
 
-    float3 iridescence = float3(0.5, 0.5, 0.5) + 0.5 * cos(NdotV * 6.0 + _Time.y * 1.5 + float3(0.0, 2.0, 4.0));
-    float3 bubbleColor = lerp(float3(0.3, 0.8, 1.0), iridescence, 0.65);
+    float3 iridescence = float3(0.5, 0.5, 0.5) + 0.5 * cos(NdotV * 6.0 + _Time.y * 1.5 + _MouseDrag.x + float3(0.0, 2.0, 4.0));
+    float3 bubbleColor = lerp(_FresnelColor.rgb, iridescence, 0.65);
 
     float3 finalRGB = lerp(bgColor, bubbleColor, fresnelView * 0.75 + 0.15) 
                     + (fresnelLight * 0.4) 
                     + (fresnelView * bubbleColor * 1.4);
 
-    float popProgress = smoothstep(0.7, 0.95, frac(_Time.y * 0.25));
     float noise = simpleNoise(i.uv * 18.0);
 
-    if (noise < popProgress) {
+    if (noise < _Pop) {
         return float4(bgColor, 1.0);
     }
 
@@ -79,9 +85,9 @@ float4 frag(v2f i) : SV_Target
 ```hlsl
 Properties
 {
-    _Power ("Power", Float) = 0.5
-    _Fresnel_Color ("Fresnel Color", Color) = (1, 0, 0, 0)
-    _Pop ("Pop", Range(0, 1)) = 0.5
+    _Power ("Power", Range(0.1, 5.0)) = 2.4
+    _Pop ("Pop (Estouro)", Range(0.0, 1.0)) = 0.0
+    _FresnelColor ("Fresnel Color", Color) = (0.3, 0.8, 1.0, 1.0)
     _Texture2D ("Texture2D", 2D) = "white" {}
 }
 ```

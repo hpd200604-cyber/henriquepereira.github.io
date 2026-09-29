@@ -3,13 +3,21 @@
 {% assign max_width = include.max_width | default: "640px" %}
 
 <div class="hlsl-viewer-container" style="margin: 1.5rem 0; text-align: center;">
-  <div style="position: relative; width: 100%; max-width: {{ max_width }}; aspect-ratio: {{ aspect }}; margin: 0 auto; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); background: #0c1017;">
+  <div style="position: relative; width: 100%; max-width: {{ max_width }}; aspect-ratio: {{ aspect }}; margin: 0 auto; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.35); background: #0c1017; user-select: none;">
     <canvas id="{{ viewer_id }}-canvas" width="640" height="360"
-            style="width: 100%; height: 100%; display: block; border-radius: 12px;"></canvas>
+            style="width: 100%; height: 100%; display: block; border-radius: 10px; cursor: grab;"></canvas>
+    
+    <div id="{{ viewer_id }}-imgui" style="display: none; position: absolute; top: 10px; right: 10px; width: 230px; background: rgba(24, 28, 36, 0.94); border: 1px solid #3c4456; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.6); font-family: 'Consolas', 'Fira Code', monospace; font-size: 11px; color: #d0d7de; text-align: left; z-index: 20; backdrop-filter: blur(4px);">
+      <div id="{{ viewer_id }}-imgui-header" style="background: #1c2b3a; border-bottom: 1px solid #3c4456; padding: 5px 8px; font-weight: bold; color: #79c0ff; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
+        <span>Inspector</span>
+        <span id="{{ viewer_id }}-imgui-toggle" style="font-size: 10px; color: #8b949e;">[-]</span>
+      </div>
+      <div id="{{ viewer_id }}-imgui-body" style="padding: 8px; max-height: 240px; overflow-y: auto;"></div>
+    </div>
   </div>
   <div id="{{ viewer_id }}-error" style="display: none; max-width: {{ max_width }}; margin: 0.75rem auto; color: #ff6b6b; font-family: monospace; font-size: 0.8rem; background: #241418; border: 1px solid #e05252; padding: 0.75rem 1rem; border-radius: 8px; text-align: left; white-space: pre-wrap;"></div>
   <span style="font-size: 0.85rem; opacity: 0.7; margin-top: 0.5rem; display: inline-block;">
-    Código HLSL executado ao vivo com WebGL (proporção {{ aspect | replace: "/", ":" }})
+    Código HLSL com controles ImGui em tempo real
   </span>
 </div>
 
@@ -18,6 +26,10 @@
   function startHLSL() {
     var canvas = document.getElementById('{{ viewer_id }}-canvas');
     var errBox = document.getElementById('{{ viewer_id }}-error');
+    var imguiPanel = document.getElementById('{{ viewer_id }}-imgui');
+    var imguiHeader = document.getElementById('{{ viewer_id }}-imgui-header');
+    var imguiToggle = document.getElementById('{{ viewer_id }}-imgui-toggle');
+    var imguiBody = document.getElementById('{{ viewer_id }}-imgui-body');
     if (!canvas) return;
 
     var gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -31,6 +43,53 @@
 
     var rawHLSL = `{{ include.code | strip }}`;
 
+    var parsedProps = [];
+    var propBlockMatch = rawHLSL.match(/Properties\s*\{([\s\S]*?)\}/i);
+    if (propBlockMatch) {
+      var propLines = propBlockMatch[1].split('\n');
+      for (var p = 0; p < propLines.length; p++) {
+        var line = propLines[p].trim();
+        if (!line || line.startsWith('//') || line.startsWith('/*')) continue;
+        var rangeMatch = line.match(/([a-zA-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*Range\s*\(\s*([\d\.\-]+)\s*,\s*([\d\.\-]+)\s*\)\s*\)\s*=\s*([\d\.\-]+)/i);
+        if (rangeMatch) {
+          parsedProps.push({
+            name: rangeMatch[1],
+            label: rangeMatch[2],
+            type: 'range',
+            min: parseFloat(rangeMatch[3]),
+            max: parseFloat(rangeMatch[4]),
+            value: parseFloat(rangeMatch[5])
+          });
+          continue;
+        }
+        var floatMatch = line.match(/([a-zA-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*Float\s*\)\s*=\s*([\d\.\-]+)/i);
+        if (floatMatch) {
+          parsedProps.push({
+            name: floatMatch[1],
+            label: floatMatch[2],
+            type: 'float',
+            min: 0,
+            max: 5,
+            value: parseFloat(floatMatch[3])
+          });
+          continue;
+        }
+        var colorMatch = line.match(/([a-zA-Z0-9_]+)\s*\(\s*"([^"]+)"\s*,\s*Color\s*\)\s*=\s*\(\s*([\d\.\-]+)\s*,\s*([\d\.\-]+)\s*,\s*([\d\.\-]+)\s*,\s*([\d\.\-]+)\s*\)/i);
+        if (colorMatch) {
+          parsedProps.push({
+            name: colorMatch[1],
+            label: colorMatch[2],
+            type: 'color',
+            r: parseFloat(colorMatch[3]),
+            g: parseFloat(colorMatch[4]),
+            b: parseFloat(colorMatch[5]),
+            a: parseFloat(colorMatch[6])
+          });
+          continue;
+        }
+      }
+    }
+
     var cleanedHLSL = rawHLSL
       .replace(/\/\/[^\n\r]*/g, '')
       .replace(/:\s*SV_Target\d*/gi, '')
@@ -40,7 +99,8 @@
       .replace(/([a-zA-Z0-9_\.]+\.xyx)\s*\+\s*_Time\.y/g, '$1 + float3(_Time.y, _Time.y, _Time.y)')
       .replace(/([a-zA-Z0-9_\.]+)\s*-\s*0\.5\b/g, '$1 - float2(0.5, 0.5)')
       .replace(/3\.0\s*-\s*2\.0\s*\*\s*([a-zA-Z0-9_\.]+)/g, 'float2(3.0, 3.0) - float2(2.0, 2.0) * $1')
-      .replace(/0\.5\s*\+\s*0\.5\s*\*\s*cos/g, 'float3(0.5, 0.5, 0.5) + float3(0.5, 0.5, 0.5) * cos');
+      .replace(/0\.5\s*\+\s*0\.5\s*\*\s*cos/g, 'float3(0.5, 0.5, 0.5) + float3(0.5, 0.5, 0.5) * cos')
+      .replace(/Properties\s*\{[\s\S]*?\}/gi, '');
 
     var vsSource = [
       'attribute vec2 a_pos;',
@@ -48,6 +108,16 @@
       '  gl_Position = vec4(a_pos, 0.0, 1.0);',
       '}'
     ].join('\n');
+
+    var autoUniforms = '';
+    for (var u = 0; u < parsedProps.length; u++) {
+      var item = parsedProps[u];
+      if (item.type === 'range' || item.type === 'float') {
+        autoUniforms += 'uniform float ' + item.name + ';\n';
+      } else if (item.type === 'color') {
+        autoUniforms += 'uniform vec4 ' + item.name + ';\n';
+      }
+    }
 
     var fsSource = [
       '#ifdef GL_FRAGMENT_PRECISION_HIGH',
@@ -60,6 +130,11 @@
       'uniform vec4 _Time;',
       'uniform vec4 _SinTime;',
       'uniform vec4 _CosTime;',
+      'uniform vec4 _Mouse;',
+      'uniform vec4 iMouse;',
+      'uniform vec2 _MouseUV;',
+      'uniform vec2 _MouseDrag;',
+      autoUniforms,
       '#define float2 vec2',
       '#define float3 vec3',
       '#define float4 vec4',
@@ -151,6 +226,168 @@
     var u_Time = gl.getUniformLocation(prog, '_Time');
     var u_SinTime = gl.getUniformLocation(prog, '_SinTime');
     var u_CosTime = gl.getUniformLocation(prog, '_CosTime');
+    var uMouse = gl.getUniformLocation(prog, '_Mouse');
+    var uiMouse = gl.getUniformLocation(prog, 'iMouse');
+    var uMouseUV = gl.getUniformLocation(prog, '_MouseUV');
+    var uMouseDrag = gl.getUniformLocation(prog, '_MouseDrag');
+
+    var uniformsMap = {};
+    for (var k = 0; k < parsedProps.length; k++) {
+      var pObj = parsedProps[k];
+      uniformsMap[pObj.name] = {
+        meta: pObj,
+        loc: gl.getUniformLocation(prog, pObj.name)
+      };
+    }
+
+    if (parsedProps.length > 0 && imguiPanel && imguiBody) {
+      imguiPanel.style.display = 'block';
+      imguiBody.innerHTML = '';
+
+      imguiHeader.onclick = function(e) {
+        e.stopPropagation();
+        if (imguiBody.style.display === 'none') {
+          imguiBody.style.display = 'block';
+          imguiToggle.textContent = '[-]';
+        } else {
+          imguiBody.style.display = 'none';
+          imguiToggle.textContent = '[+]';
+        }
+      };
+
+      parsedProps.forEach(function(prop) {
+        var row = document.createElement('div');
+        row.style.marginBottom = '6px';
+
+        if (prop.type === 'range' || prop.type === 'float') {
+          var step = (prop.max - prop.min) <= 2 ? '0.01' : '0.05';
+          row.innerHTML = 
+            '<div style="display:flex; justify-content:space-between; margin-bottom:2px; font-size:10px;">' +
+              '<span style="color:#8b949e;">' + prop.label + '</span>' +
+              '<span id="' + prop.name + '_val" style="color:#58a6ff;">' + prop.value.toFixed(2) + '</span>' +
+            '</div>' +
+            '<input type="range" min="' + prop.min + '" max="' + prop.max + '" step="' + step + '" value="' + prop.value + '" ' +
+                   'style="width:100%; accent-color:#1f6feb; background:#0d1117; height:4px; border-radius:2px; cursor:pointer;">';
+          
+          var slider = row.querySelector('input');
+          var display = row.querySelector('#' + prop.name + '_val');
+          slider.oninput = function(e) {
+            e.stopPropagation();
+            prop.value = parseFloat(this.value);
+            display.textContent = prop.value.toFixed(2);
+          };
+          slider.onmousedown = function(e) { e.stopPropagation(); };
+          slider.ontouchstart = function(e) { e.stopPropagation(); };
+        } else if (prop.type === 'color') {
+          function toHex(r, g, b) {
+            var hr = Math.round(r * 255).toString(16).padStart(2, '0');
+            var hg = Math.round(g * 255).toString(16).padStart(2, '0');
+            var hb = Math.round(b * 255).toString(16).padStart(2, '0');
+            return '#' + hr + hg + hb;
+          }
+          var hexColor = toHex(prop.r, prop.g, prop.b);
+          row.innerHTML = 
+            '<div style="display:flex; justify-content:space-between; align-items:center;">' +
+              '<span style="color:#8b949e; font-size:10px;">' + prop.label + '</span>' +
+              '<input type="color" value="' + hexColor + '" ' +
+                     'style="width:28px; height:18px; border:1px solid #3c4456; border-radius:3px; background:#0d1117; cursor:pointer; padding:0;">' +
+            '</div>';
+
+          var picker = row.querySelector('input');
+          picker.oninput = function(e) {
+            e.stopPropagation();
+            var hex = this.value;
+            prop.r = parseInt(hex.substr(1, 2), 16) / 255.0;
+            prop.g = parseInt(hex.substr(3, 2), 16) / 255.0;
+            prop.b = parseInt(hex.substr(5, 2), 16) / 255.0;
+          };
+          picker.onmousedown = function(e) { e.stopPropagation(); };
+          picker.ontouchstart = function(e) { e.stopPropagation(); };
+        }
+        imguiBody.appendChild(row);
+      });
+    }
+
+    var mouseX = 320, mouseY = 180;
+    var startX = 0, startY = 0;
+    var isDown = false;
+    var dragX = 0, dragY = 0;
+    var lastClientX = 0, lastClientY = 0;
+
+    function getCanvasCoords(clientX, clientY) {
+      var rect = canvas.getBoundingClientRect();
+      var normX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      var normY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+      return {
+        x: normX * canvas.width,
+        y: (1.0 - normY) * canvas.height,
+        uvX: normX,
+        uvY: 1.0 - normY
+      };
+    }
+
+    canvas.addEventListener('mousedown', function(e) {
+      isDown = true;
+      canvas.style.cursor = 'grabbing';
+      var pos = getCanvasCoords(e.clientX, e.clientY);
+      mouseX = pos.x;
+      mouseY = pos.y;
+      startX = pos.x;
+      startY = pos.y;
+      lastClientX = e.clientX;
+      lastClientY = e.clientY;
+    });
+
+    window.addEventListener('mousemove', function(e) {
+      if (!isDown) return;
+      var pos = getCanvasCoords(e.clientX, e.clientY);
+      mouseX = pos.x;
+      mouseY = pos.y;
+      var dx = e.clientX - lastClientX;
+      var dy = e.clientY - lastClientY;
+      dragX += dx * 0.01;
+      dragY += dy * 0.01;
+      lastClientX = e.clientX;
+      lastClientY = e.clientY;
+    });
+
+    window.addEventListener('mouseup', function() {
+      if (isDown) {
+        isDown = false;
+        canvas.style.cursor = 'grab';
+      }
+    });
+
+    canvas.addEventListener('touchstart', function(e) {
+      if (!e.touches || e.touches.length === 0) return;
+      isDown = true;
+      var t = e.touches[0];
+      var pos = getCanvasCoords(t.clientX, t.clientY);
+      mouseX = pos.x;
+      mouseY = pos.y;
+      startX = pos.x;
+      startY = pos.y;
+      lastClientX = t.clientX;
+      lastClientY = t.clientY;
+    }, { passive: true });
+
+    window.addEventListener('touchmove', function(e) {
+      if (!isDown || !e.touches || e.touches.length === 0) return;
+      var t = e.touches[0];
+      var pos = getCanvasCoords(t.clientX, t.clientY);
+      mouseX = pos.x;
+      mouseY = pos.y;
+      var dx = t.clientX - lastClientX;
+      var dy = t.clientY - lastClientY;
+      dragX += dx * 0.01;
+      dragY += dy * 0.01;
+      lastClientX = t.clientX;
+      lastClientY = t.clientY;
+    }, { passive: true });
+
+    window.addEventListener('touchend', function() {
+      isDown = false;
+    });
 
     function resize() {
       var dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -176,6 +413,24 @@
       if (u_Time) gl.uniform4f(u_Time, sec * 0.05, sec, sec * 2.0, sec * 3.0);
       if (u_SinTime) gl.uniform4f(u_SinTime, Math.sin(sec * 0.125), Math.sin(sec * 0.25), Math.sin(sec * 0.5), Math.sin(sec));
       if (u_CosTime) gl.uniform4f(u_CosTime, Math.cos(sec * 0.125), Math.cos(sec * 0.25), Math.cos(sec * 0.5), Math.cos(sec));
+
+      var clickX = isDown ? startX : -Math.abs(startX || 1);
+      var clickY = isDown ? startY : -Math.abs(startY || 1);
+      if (uMouse) gl.uniform4f(uMouse, mouseX, mouseY, clickX, clickY);
+      if (uiMouse) gl.uniform4f(uiMouse, mouseX, mouseY, clickX, clickY);
+      if (uMouseUV) gl.uniform2f(uMouseUV, mouseX / canvas.width, mouseY / canvas.height);
+      if (uMouseDrag) gl.uniform2f(uMouseDrag, dragX, dragY);
+
+      for (var key in uniformsMap) {
+        var uItem = uniformsMap[key];
+        if (uItem.loc) {
+          if (uItem.meta.type === 'range' || uItem.meta.type === 'float') {
+            gl.uniform1f(uItem.loc, uItem.meta.value);
+          } else if (uItem.meta.type === 'color') {
+            gl.uniform4f(uItem.loc, uItem.meta.r, uItem.meta.g, uItem.meta.b, uItem.meta.a);
+          }
+        }
+      }
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       requestAnimationFrame(render);
