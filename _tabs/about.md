@@ -4,23 +4,39 @@ icon: fas fa-user
 order: 4
 ---
 
-Olá! Sou o **Henrique Pereira** e foco em **Shaders e Computação Gráfica**.
+### Quem sou eu
 
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec porttitor mattis malesuada. Aenean maximus mollis mi non tristique. Phasellus venenatis enim et sem eleifend tempor.
+Sou **Henrique Pereira Dias**, desenvolvedor e estudante na área de jogos digitais baseado em São Paulo, Brasil. Minha atuação é voltada para a criação técnica e artística de jogos, com foco principal em **Unity** e **HLSL**, além de experiência com **Unreal Engine**.
 
 ---
 
-### Áreas de Foco & Interesses
+### Objetivos
 
-- **Lorem & Ipsum:** Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-- **Lorem:** Donec porttitor mattis malesuada.
-- **Lorem Ipsum:** Aenean maximus mollis mi non tristique.
-- **Ipsum:** Phasellus venenatis enim et sem eleifend tempor.
+Meu objetivo profissional é me especializar em **Computação Gráfica** e **Technical Art** para a indústria de jogos. 
+
+Busco desenvolver efeitos e elementos visuais de alta qualidade e impacto estético, mantendo sempre o equilíbrio entre fidelidade visual, organização de projeto e otimização de performance.
+
+---
+
+### Conhecimentos Técnicos
+
+#### Game Engines
+- **Unity** (URP / Shader Graph / ShaderLab / HLSL)
+- **Unreal Engine**
+
+#### Shaders & Computação Gráfica
+- HLSL
+- ShaderLab
+- Shader Graph
+- Otimização e Matemática de Shaders
+
+#### Arte 3D & Ferramentas
+- **Blender:** Modelagem 3D, Criação e Edição de Meshes, UV Mapping, Rigging
+- **Suíte Adobe:** Photoshop, Illustrator, After Effects
+- **Controle de Versão:** Git, GitHub
 
 ---
 
 ### Contato & Redes
 
 - **GitHub:** [hpd200604-cyber](https://github.com/hpd200604-cyber)
-- **Email:** seu-email@exemplo.com
-- **LinkedIn / ArtStation:** *(adicione seus links aqui)*
