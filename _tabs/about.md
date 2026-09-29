@@ -1,7 +1,7 @@
 ---
 title: Sobre Mim
 icon: fas fa-user
-order: 4
+order: 1
 ---
 
 ### Quem sou eu
